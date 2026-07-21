@@ -1,5 +1,7 @@
 package com.jackson.horizontalminer.inventory;
 
+import com.jackson.horizontalminer.blockentity.MiningMachineBlockEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.items.ItemStackHandler;
 
 public class MiningMachineInventory extends ItemStackHandler {
@@ -14,6 +16,11 @@ public class MiningMachineInventory extends ItemStackHandler {
     public MiningMachineInventory(Runnable onContentsChanged) {
         super(TOTAL_SLOTS);
         this.onContentsChanged = onContentsChanged;
+    }
+
+    @Override
+    public boolean isItemValid(int slot, ItemStack stack) {
+        return slot == FUEL_SLOT && MiningMachineBlockEntity.isValidFuel(stack);
     }
 
     @Override

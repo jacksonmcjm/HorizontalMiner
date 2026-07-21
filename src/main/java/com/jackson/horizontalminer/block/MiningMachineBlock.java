@@ -1,18 +1,24 @@
 package com.jackson.horizontalminer.block;
 
 import com.jackson.horizontalminer.blockentity.MiningMachineBlockEntity;
+import com.jackson.horizontalminer.blockentity.ModBlockEntities;
+import com.jackson.horizontalminer.inventory.MiningMachineInventory;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Containers;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
@@ -37,11 +43,33 @@ public class MiningMachineBlock extends BaseEntityBlock {
     @Override
     public BlockState getStateForPlacement(BlockPlaceContext context) {
         return this.defaultBlockState()
-                .setValue(FACING, context.getHorizontalDirection().getOpposite());
+                .setValue(FACING, context.getHorizontalDirection());
     }
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new MiningMachineBlockEntity(pos, state);
+    }
+    @Override
+    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
+                                                                    BlockEntityType<T> blockEntityType) {
+        return level.isClientSide ? null : createTickerHelper(blockEntityType,
+                ModBlockEntities.MINING_MACHINE.get(), MiningMachineBlockEntity::serverTick);
+    }
+    @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (!state.is(newState.getBlock())
+                && level.getBlockEntity(pos) instanceof MiningMachineBlockEntity machine) {
+            MiningMachineInventory inventory = machine.getInventory();
+            for (int slot = 0; slot < MiningMachineInventory.TOTAL_SLOTS; slot++) {
+                ItemStack stack = inventory.getStackInSlot(slot);
+                if (!stack.isEmpty()) {
+                    Containers.dropItemStack(level, pos.getX(), pos.getY(), pos.getZ(),
+                            inventory.extractItem(slot, stack.getCount(), false));
+                }
+            }
+        }
+
+        super.onRemove(state, level, pos, newState, movedByPiston);
     }
     @Override
     public InteractionResult use(BlockState state,

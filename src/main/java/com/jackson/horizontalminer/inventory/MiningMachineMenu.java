@@ -8,6 +8,8 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerLevelAccess;
+import net.minecraft.world.inventory.ContainerData;
+import net.minecraft.world.inventory.SimpleContainerData;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.items.SlotItemHandler;
@@ -21,6 +23,7 @@ public class MiningMachineMenu extends AbstractContainerMenu {
     private static final int HOTBAR_END = HOTBAR_START + 9;
 
     private final ContainerLevelAccess access;
+    private final ContainerData burnTimeData;
 
     public MiningMachineMenu(int containerId,
                              Inventory playerInventory,
@@ -29,21 +32,24 @@ public class MiningMachineMenu extends AbstractContainerMenu {
     }
 
     private MiningMachineMenu(int containerId, Inventory playerInventory, MenuData menuData) {
-        this(containerId, playerInventory, menuData.inventory(), menuData.blockPos());
+        this(containerId, playerInventory, menuData.inventory(), menuData.blockPos(), new SimpleContainerData(1));
     }
 
     public MiningMachineMenu(int containerId,
                              Inventory playerInventory,
                              MiningMachineInventory machineInventory,
-                             BlockPos blockPos) {
+                             BlockPos blockPos,
+                             ContainerData burnTimeData) {
 
         super(ModMenuTypes.MINING_MACHINE.get(), containerId);
 
         this.access = ContainerLevelAccess.create(playerInventory.player.level(), blockPos);
+        this.burnTimeData = burnTimeData;
+        addDataSlots(burnTimeData);
 
         // Fuel is the only machine slot players can insert into. Mining logic
         // will populate the nine extraction-only output slots.
-        addSlot(new SlotItemHandler(machineInventory, MiningMachineInventory.FUEL_SLOT, 26, 18));
+        addSlot(new FuelSlot(machineInventory, MiningMachineInventory.FUEL_SLOT, 26, 18));
         for (int index = MiningMachineInventory.OUTPUT_START; index <= MiningMachineInventory.OUTPUT_END; index++) {
             int outputIndex = index - MiningMachineInventory.OUTPUT_START;
             addSlot(new OutputSlot(machineInventory, index, 62 + (outputIndex % 3) * 18,
@@ -65,6 +71,10 @@ public class MiningMachineMenu extends AbstractContainerMenu {
     @Override
     public boolean stillValid(Player player) {
         return stillValid(access, player, ModBlocks.MINING_MACHINE.get());
+    }
+
+    public int getRemainingBurnTime() {
+        return burnTimeData.get(0);
     }
 
     @Override
@@ -121,6 +131,18 @@ public class MiningMachineMenu extends AbstractContainerMenu {
         @Override
         public boolean mayPlace(ItemStack stack) {
             return false;
+        }
+    }
+
+    private static class FuelSlot extends SlotItemHandler {
+
+        private FuelSlot(MiningMachineInventory inventory, int slot, int x, int y) {
+            super(inventory, slot, x, y);
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            return MiningMachineBlockEntity.isValidFuel(stack);
         }
     }
 }
