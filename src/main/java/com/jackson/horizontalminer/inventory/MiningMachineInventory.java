@@ -1,7 +1,6 @@
 package com.jackson.horizontalminer.inventory;
 
 import net.minecraftforge.items.ItemStackHandler;
-import net.minecraftforge.items.ItemStackHandler;
 
 public class MiningMachineInventory extends ItemStackHandler {
 

@@ -34,7 +34,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
                                             Inventory playerInventory,
                                             net.minecraft.world.entity.player.Player player) {
 
-        return new MiningMachineMenu(containerId, playerInventory, null);
+        return new MiningMachineMenu(containerId, playerInventory, inventory, worldPosition);
     }
 
     @Override
