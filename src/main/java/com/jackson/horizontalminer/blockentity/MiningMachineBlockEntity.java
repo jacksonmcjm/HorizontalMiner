@@ -3,7 +3,6 @@ package com.jackson.horizontalminer.blockentity;
 import com.jackson.horizontalminer.block.MiningMachineBlock;
 import com.jackson.horizontalminer.inventory.MiningMachineInventory;
 import com.jackson.horizontalminer.inventory.MiningMachineMenu;
-import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -23,15 +22,31 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.Level;
 import net.minecraftforge.common.ForgeHooks;
-import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class MiningMachineBlockEntity extends BlockEntity implements MenuProvider {
 
-    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int TICKS_PER_MINING_CYCLE = 100;
+    public static final int MACHINE_DATA_COUNT = 6;
+    public static final int DATA_REMAINING_BURN_TIME = 0;
+    public static final int DATA_MAXIMUM_BURN_TIME = 1;
+    public static final int DATA_MINING_PROGRESS = 2;
+    public static final int DATA_MAXIMUM_MINING_PROGRESS = 3;
+    public static final int DATA_TUNNEL_DEPTH = 4;
+    public static final int DATA_MACHINE_STATUS = 5;
+
+    private static final int TUNNEL_HALF_WIDTH = 2;
+    private static final int CENTER_COLUMN_HALF_WIDTH = 1;
+    private static final int CENTER_COLUMN_HEIGHT = 3;
+    private static final int OUTER_COLUMN_HEIGHT = 2;
+    private static final int FIRST_SLICE_DISTANCE = 1;
+    private static final int TUNNEL_WIDTH = TUNNEL_HALF_WIDTH * 2 + 1;
+    private static final int CENTER_COLUMN_COUNT = CENTER_COLUMN_HALF_WIDTH * 2 + 1;
+    private static final int OUTER_COLUMN_COUNT = TUNNEL_WIDTH - CENTER_COLUMN_COUNT;
+    private static final int SLICE_BLOCK_COUNT = CENTER_COLUMN_HEIGHT * CENTER_COLUMN_COUNT
+            + OUTER_COLUMN_HEIGHT * OUTER_COLUMN_COUNT;
 
     private final MiningMachineInventory inventory =
             new MiningMachineInventory(this::setChanged);
@@ -43,16 +58,16 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     private List<PendingTarget> pendingTargets = List.of();
     private List<ItemStack> pendingDrops = List.of();
     private boolean outputBlocked;
-    private final ContainerData burnTimeData = new ContainerData() {
+    private final ContainerData machineData = new ContainerData() {
         @Override
         public int get(int index) {
             return switch (index) {
-                case 0 -> remainingBurnTime;
-                case 1 -> maximumBurnTime;
-                case 2 -> miningProgress;
-                case 3 -> TICKS_PER_MINING_CYCLE;
-                case 4 -> currentTunnelDepth;
-                case 5 -> getMachineStatus().ordinal();
+                case DATA_REMAINING_BURN_TIME -> remainingBurnTime;
+                case DATA_MAXIMUM_BURN_TIME -> maximumBurnTime;
+                case DATA_MINING_PROGRESS -> miningProgress;
+                case DATA_MAXIMUM_MINING_PROGRESS -> TICKS_PER_MINING_CYCLE;
+                case DATA_TUNNEL_DEPTH -> currentTunnelDepth;
+                case DATA_MACHINE_STATUS -> getMachineStatus().ordinal();
                 default -> 0;
             };
         }
@@ -60,10 +75,10 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         @Override
         public void set(int index, int value) {
             switch (index) {
-                case 0 -> remainingBurnTime = value;
-                case 1 -> maximumBurnTime = value;
-                case 2 -> miningProgress = value;
-                case 4 -> currentTunnelDepth = value;
+                case DATA_REMAINING_BURN_TIME -> remainingBurnTime = value;
+                case DATA_MAXIMUM_BURN_TIME -> maximumBurnTime = value;
+                case DATA_MINING_PROGRESS -> miningProgress = value;
+                case DATA_TUNNEL_DEPTH -> currentTunnelDepth = value;
                 default -> {
                 }
             }
@@ -71,7 +86,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
 
         @Override
         public int getCount() {
-            return 6;
+            return MACHINE_DATA_COUNT;
         }
     };
 
@@ -83,8 +98,8 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         return inventory;
     }
 
-    public ContainerData getBurnTimeData() {
-        return burnTimeData;
+    public ContainerData getMachineData() {
+        return machineData;
     }
 
     public int getRemainingBurnTime() {
@@ -127,12 +142,13 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     public List<BlockPos> calculateCurrentSlice() {
         Direction facing = getBlockState().getValue(MiningMachineBlock.FACING);
         Direction acrossTunnel = facing.getClockWise();
-        BlockPos sliceOrigin = worldPosition.relative(facing, currentTunnelDepth + 1);
-        List<BlockPos> slice = new ArrayList<>(13);
+        BlockPos sliceOrigin = worldPosition.relative(facing, currentTunnelDepth + FIRST_SLICE_DISTANCE);
+        List<BlockPos> slice = new ArrayList<>(SLICE_BLOCK_COUNT);
 
-        for (int sideways = -2; sideways <= 2; sideways++) {
-            int highestY = Math.abs(sideways) <= 1 ? 2 : 1;
-            for (int yOffset = 0; yOffset <= highestY; yOffset++) {
+        for (int sideways = -TUNNEL_HALF_WIDTH; sideways <= TUNNEL_HALF_WIDTH; sideways++) {
+            int columnHeight = Math.abs(sideways) <= CENTER_COLUMN_HALF_WIDTH
+                    ? CENTER_COLUMN_HEIGHT : OUTER_COLUMN_HEIGHT;
+            for (int yOffset = 0; yOffset < columnHeight; yOffset++) {
                 slice.add(sliceOrigin.relative(acrossTunnel, sideways).above(yOffset));
             }
         }
@@ -203,23 +219,24 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
      * cycle completes. An output-capacity failure pauses before any further fuel burns.
      */
     private boolean ensurePendingSlice(ServerLevel level) {
-        if (!pendingTargets.isEmpty() || !pendingDrops.isEmpty()) {
-            if (canInsertAll(pendingDrops)) {
-                outputBlocked = false;
-                return true;
-            }
-
-            outputBlocked = true;
-            return false;
+        if (hasPendingSlice()) {
+            return updateOutputBlockedState();
         }
 
         if (currentSlice.isEmpty()) {
             currentSlice = calculateCurrentSlice();
         }
 
+        MiningPlan plan = calculateMiningPlan(level, currentSlice);
+        pendingTargets = plan.targets();
+        pendingDrops = plan.drops();
+        return updateOutputBlockedState();
+    }
+
+    private MiningPlan calculateMiningPlan(ServerLevel level, List<BlockPos> slice) {
         List<PendingTarget> targets = new ArrayList<>();
         List<ItemStack> drops = new ArrayList<>();
-        for (BlockPos target : currentSlice) {
+        for (BlockPos target : slice) {
             if (!isMineable(level, target)) {
                 continue;
             }
@@ -230,8 +247,14 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
                     ItemStack.EMPTY));
         }
 
-        pendingTargets = List.copyOf(targets);
-        pendingDrops = copyStacks(drops);
+        return new MiningPlan(List.copyOf(targets), copyStacks(drops));
+    }
+
+    private boolean hasPendingSlice() {
+        return !pendingTargets.isEmpty() || !pendingDrops.isEmpty();
+    }
+
+    private boolean updateOutputBlockedState() {
         outputBlocked = !canInsertAll(pendingDrops);
         return !outputBlocked;
     }
@@ -253,12 +276,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
             return;
         }
 
-        for (PendingTarget target : pendingTargets) {
-            level.setBlock(target.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
-        }
-
-        LOGGER.info("Mining Machine at {} mined slice depth {}: removed {} blocks and inserted {} drop stacks",
-                worldPosition, currentTunnelDepth, pendingTargets.size(), pendingDrops.size());
+        removePendingTargets(level);
         currentTunnelDepth++;
         miningProgress = 0;
         currentSlice = calculateCurrentSlice();
@@ -272,11 +290,14 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         });
     }
 
-    private boolean canInsertAll(List<ItemStack> drops) {
-        List<ItemStack> simulatedOutputs = new ArrayList<>();
-        for (int slot = MiningMachineInventory.OUTPUT_START; slot <= MiningMachineInventory.OUTPUT_END; slot++) {
-            simulatedOutputs.add(inventory.getStackInSlot(slot).copy());
+    private void removePendingTargets(ServerLevel level) {
+        for (PendingTarget target : pendingTargets) {
+            level.setBlock(target.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
         }
+    }
+
+    private boolean canInsertAll(List<ItemStack> drops) {
+        List<ItemStack> simulatedOutputs = copyOutputSlots();
 
         for (ItemStack drop : drops) {
             if (!simulateInsert(simulatedOutputs, drop.copy()).isEmpty()) {
@@ -312,10 +333,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     }
 
     private boolean insertAllDrops(List<ItemStack> drops) {
-        List<ItemStack> originalOutputs = new ArrayList<>();
-        for (int slot = MiningMachineInventory.OUTPUT_START; slot <= MiningMachineInventory.OUTPUT_END; slot++) {
-            originalOutputs.add(inventory.getStackInSlot(slot).copy());
-        }
+        List<ItemStack> originalOutputs = copyOutputSlots();
 
         for (ItemStack drop : drops) {
             if (!insertOutput(drop.copy()).isEmpty()) {
@@ -361,6 +379,14 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         }
     }
 
+    private List<ItemStack> copyOutputSlots() {
+        List<ItemStack> outputSlots = new ArrayList<>(MiningMachineInventory.OUTPUT_SLOT_COUNT);
+        for (int slot = MiningMachineInventory.OUTPUT_START; slot <= MiningMachineInventory.OUTPUT_END; slot++) {
+            outputSlots.add(inventory.getStackInSlot(slot).copy());
+        }
+        return outputSlots;
+    }
+
     private void clearPendingSlice() {
         pendingTargets = List.of();
         pendingDrops = List.of();
@@ -372,6 +398,9 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     }
 
     private record PendingTarget(BlockPos pos, int stateId) {
+    }
+
+    private record MiningPlan(List<PendingTarget> targets, List<ItemStack> drops) {
     }
 
     private boolean consumeFuel() {
@@ -403,7 +432,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
                                             Inventory playerInventory,
                                             net.minecraft.world.entity.player.Player player) {
 
-        return new MiningMachineMenu(containerId, playerInventory, inventory, worldPosition, burnTimeData);
+        return new MiningMachineMenu(containerId, playerInventory, inventory, worldPosition, machineData);
     }
 
     @Override

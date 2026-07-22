@@ -9,6 +9,7 @@ public class MiningMachineInventory extends ItemStackHandler {
     public static final int FUEL_SLOT = 0;
     public static final int OUTPUT_START = 1;
     public static final int OUTPUT_END = 9;
+    public static final int OUTPUT_SLOT_COUNT = OUTPUT_END - OUTPUT_START + 1;
     public static final int TOTAL_SLOTS = 10;
 
     private final Runnable onContentsChanged;

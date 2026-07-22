@@ -1,6 +1,5 @@
 package com.jackson.horizontalminer.client;
 
-import com.jackson.horizontalminer.blockentity.MiningMachineBlockEntity;
 import com.jackson.horizontalminer.inventory.MiningMachineMenu;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -30,6 +29,10 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     private static final int PROGRESS_Y = 31;
     private static final int PROGRESS_WIDTH = 29;
     private static final int PROGRESS_HEIGHT = 6;
+    private static final int STATUS_X = 124;
+    private static final int STATUS_Y = 8;
+    private static final int DEPTH_X = 124;
+    private static final int DEPTH_Y = 53;
 
     public MiningMachineScreen(MiningMachineMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -46,8 +49,8 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
         drawStatus(graphics);
         drawBurnIndicator(graphics);
         drawMiningProgress(graphics);
-        graphics.drawString(font, Component.translatable("gui.horizontalminer.depth", menu.getTunnelDepth()),
-                leftPos + 124, topPos + 53, LABEL_COLOR, false);
+        graphics.drawString(font, Component.literal(Integer.toString(menu.getTunnelDepth())),
+                leftPos + DEPTH_X, topPos + DEPTH_Y, LABEL_COLOR, false);
 
         drawSlot(graphics, leftPos + 26, topPos + 18);
         for (int row = 0; row < 3; row++) {
@@ -82,8 +85,8 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     }
 
     private void drawStatus(GuiGraphics graphics) {
-        int x = leftPos + 124;
-        int y = topPos + 8;
+        int x = leftPos + STATUS_X;
+        int y = topPos + STATUS_Y;
         switch (menu.getMachineStatus()) {
             case MINING -> graphics.drawString(font, Component.translatable("gui.horizontalminer.status.mining"),
                     x, y, STATUS_FILL, false);
@@ -105,10 +108,6 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     }
 
     private void drawBurnIndicator(GuiGraphics graphics) {
-        if (menu.getRemainingBurnTime() <= 0) {
-            return;
-        }
-
         int x = leftPos + BURN_X;
         int y = topPos + BURN_Y;
         int filled = menu.getScaledBurnProgress(BURN_HEIGHT - 2);
@@ -136,8 +135,7 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     }
 
     private void renderMachineTooltips(GuiGraphics graphics, int mouseX, int mouseY) {
-        if (isInside(mouseX, mouseY, BURN_X, BURN_Y, BURN_WIDTH, BURN_HEIGHT)
-                && menu.getRemainingBurnTime() > 0) {
+        if (isInside(mouseX, mouseY, BURN_X, BURN_Y, BURN_WIDTH, BURN_HEIGHT)) {
             graphics.renderTooltip(font, List.of(
                     Component.translatable("gui.horizontalminer.tooltip.burn_time").getVisualOrderText(),
                     Component.translatable("gui.horizontalminer.tooltip.ticks_remaining", menu.getRemainingBurnTime())
@@ -150,7 +148,7 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
                     Component.translatable("gui.horizontalminer.tooltip.mining_progress").getVisualOrderText(),
                     Component.translatable("gui.horizontalminer.tooltip.percent", percent).getVisualOrderText()
             ), mouseX, mouseY);
-        } else if (isInside(mouseX, mouseY, 124, 53, 44, 9)) {
+        } else if (isInside(mouseX, mouseY, DEPTH_X, DEPTH_Y, 44, 9)) {
             graphics.renderTooltip(font, Component.translatable("gui.horizontalminer.tooltip.depth"), mouseX, mouseY);
         }
     }

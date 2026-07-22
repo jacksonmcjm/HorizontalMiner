@@ -59,17 +59,20 @@ public class MiningMachineBlock extends BaseEntityBlock {
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock())
                 && level.getBlockEntity(pos) instanceof MiningMachineBlockEntity machine) {
-            MiningMachineInventory inventory = machine.getInventory();
-            for (int slot = 0; slot < MiningMachineInventory.TOTAL_SLOTS; slot++) {
-                ItemStack stack = inventory.getStackInSlot(slot);
-                if (!stack.isEmpty()) {
-                    Containers.dropItemStack(level, pos.getX(), pos.getY(), pos.getZ(),
-                            inventory.extractItem(slot, stack.getCount(), false));
-                }
-            }
+            dropInventoryContents(level, pos, machine.getInventory());
         }
 
         super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+
+    private static void dropInventoryContents(Level level, BlockPos pos, MiningMachineInventory inventory) {
+        for (int slot = 0; slot < MiningMachineInventory.TOTAL_SLOTS; slot++) {
+            ItemStack stack = inventory.getStackInSlot(slot);
+            if (!stack.isEmpty()) {
+                ItemStack extracted = inventory.extractItem(slot, stack.getCount(), false);
+                Containers.dropItemStack(level, pos.getX(), pos.getY(), pos.getZ(), extracted);
+            }
+        }
     }
     @Override
     public InteractionResult use(BlockState state,

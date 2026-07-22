@@ -1,7 +1,6 @@
 {
   "block.horizontalminer.mining_machine": "Mining Machine",
   "gui.horizontalminer.fuel": "Fuel",
-  "gui.horizontalminer.depth": "Tunnel Length: %s",
   "gui.horizontalminer.status.mining": "Mining",
   "gui.horizontalminer.status.out_of": "Out of",
   "gui.horizontalminer.status.fuel": "Fuel",
