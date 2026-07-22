@@ -1,10 +1,13 @@
 package com.jackson.horizontalminer.client;
 
+import com.jackson.horizontalminer.blockentity.MiningMachineBlockEntity;
 import com.jackson.horizontalminer.inventory.MiningMachineMenu;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
+
+import java.util.List;
 
 /** Client presentation for the mining machine's fuel and output inventory. */
 public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMenu> {
@@ -18,6 +21,15 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     private static final int LABEL_COLOR = 0xFF404040;
     private static final int STATUS_EMPTY = 0xFF555555;
     private static final int STATUS_FILL = 0xFF5C8E3E;
+    private static final int BURN_FILL = 0xFFE08A2E;
+    private static final int BURN_X = 124;
+    private static final int BURN_Y = 31;
+    private static final int BURN_WIDTH = 7;
+    private static final int BURN_HEIGHT = 18;
+    private static final int PROGRESS_X = 137;
+    private static final int PROGRESS_Y = 31;
+    private static final int PROGRESS_WIDTH = 29;
+    private static final int PROGRESS_HEIGHT = 6;
 
     public MiningMachineScreen(MiningMachineMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -29,9 +41,13 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
     @Override
     protected void renderBg(GuiGraphics graphics, float partialTick, int mouseX, int mouseY) {
         drawPanel(graphics, leftPos, topPos, imageWidth, imageHeight);
-        graphics.drawString(font, "Fuel", leftPos + 18, topPos + 42, LABEL_COLOR, false);
-        graphics.drawString(font, "Output", leftPos + 124, topPos + 8, LABEL_COLOR, false);
-        drawIdleStatus(graphics, leftPos + 124, topPos + 24);
+        graphics.drawString(font, Component.translatable("gui.horizontalminer.fuel"),
+                leftPos + 18, topPos + 42, LABEL_COLOR, false);
+        drawStatus(graphics);
+        drawBurnIndicator(graphics);
+        drawMiningProgress(graphics);
+        graphics.drawString(font, Component.translatable("gui.horizontalminer.depth", menu.getTunnelDepth()),
+                leftPos + 124, topPos + 53, LABEL_COLOR, false);
 
         drawSlot(graphics, leftPos + 26, topPos + 18);
         for (int row = 0; row < 3; row++) {
@@ -65,12 +81,50 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
         graphics.fill(x + 1, y + 1, x + 16, y + 16, SLOT_FILL);
     }
 
-    private void drawIdleStatus(GuiGraphics graphics, int x, int y) {
-        graphics.drawString(font, "Status", x, y, LABEL_COLOR, false);
-        graphics.fill(x, y + 10, x + 36, y + 16, SLOT_SHADOW);
-        graphics.fill(x + 1, y + 11, x + 35, y + 15, STATUS_EMPTY);
-        graphics.fill(x + 1, y + 11, x + 1, y + 15, STATUS_FILL);
-        graphics.drawString(font, "Idle", x + 4, y + 20, LABEL_COLOR, false);
+    private void drawStatus(GuiGraphics graphics) {
+        int x = leftPos + 124;
+        int y = topPos + 8;
+        switch (menu.getMachineStatus()) {
+            case MINING -> graphics.drawString(font, Component.translatable("gui.horizontalminer.status.mining"),
+                    x, y, STATUS_FILL, false);
+            case OUT_OF_FUEL -> {
+                graphics.drawString(font, Component.translatable("gui.horizontalminer.status.out_of"),
+                        x, y, LABEL_COLOR, false);
+                graphics.drawString(font, Component.translatable("gui.horizontalminer.status.fuel"),
+                        x, y + 9, LABEL_COLOR, false);
+            }
+            case OUTPUT_FULL -> {
+                graphics.drawString(font, Component.translatable("gui.horizontalminer.status.output"),
+                        x, y, LABEL_COLOR, false);
+                graphics.drawString(font, Component.translatable("gui.horizontalminer.status.full"),
+                        x, y + 9, LABEL_COLOR, false);
+            }
+            case IDLE -> graphics.drawString(font, Component.translatable("gui.horizontalminer.status.idle"),
+                    x, y, LABEL_COLOR, false);
+        }
+    }
+
+    private void drawBurnIndicator(GuiGraphics graphics) {
+        if (menu.getRemainingBurnTime() <= 0) {
+            return;
+        }
+
+        int x = leftPos + BURN_X;
+        int y = topPos + BURN_Y;
+        int filled = menu.getScaledBurnProgress(BURN_HEIGHT - 2);
+        graphics.fill(x, y, x + BURN_WIDTH, y + BURN_HEIGHT, SLOT_SHADOW);
+        graphics.fill(x + 1, y + 1, x + BURN_WIDTH - 1, y + BURN_HEIGHT - 1, STATUS_EMPTY);
+        graphics.fill(x + 1, y + BURN_HEIGHT - 1 - filled, x + BURN_WIDTH - 1, y + BURN_HEIGHT - 1,
+                BURN_FILL);
+    }
+
+    private void drawMiningProgress(GuiGraphics graphics) {
+        int x = leftPos + PROGRESS_X;
+        int y = topPos + PROGRESS_Y;
+        int filled = menu.getScaledMiningProgress(PROGRESS_WIDTH - 2);
+        graphics.fill(x, y, x + PROGRESS_WIDTH, y + PROGRESS_HEIGHT, SLOT_SHADOW);
+        graphics.fill(x + 1, y + 1, x + PROGRESS_WIDTH - 1, y + PROGRESS_HEIGHT - 1, STATUS_EMPTY);
+        graphics.fill(x + 1, y + 1, x + 1 + filled, y + PROGRESS_HEIGHT - 1, STATUS_FILL);
     }
 
     @Override
@@ -78,5 +132,31 @@ public class MiningMachineScreen extends AbstractContainerScreen<MiningMachineMe
         renderBackground(graphics);
         super.render(graphics, mouseX, mouseY, partialTick);
         renderTooltip(graphics, mouseX, mouseY);
+        renderMachineTooltips(graphics, mouseX, mouseY);
+    }
+
+    private void renderMachineTooltips(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (isInside(mouseX, mouseY, BURN_X, BURN_Y, BURN_WIDTH, BURN_HEIGHT)
+                && menu.getRemainingBurnTime() > 0) {
+            graphics.renderTooltip(font, List.of(
+                    Component.translatable("gui.horizontalminer.tooltip.burn_time").getVisualOrderText(),
+                    Component.translatable("gui.horizontalminer.tooltip.ticks_remaining", menu.getRemainingBurnTime())
+                            .getVisualOrderText()
+            ), mouseX, mouseY);
+        } else if (isInside(mouseX, mouseY, PROGRESS_X, PROGRESS_Y, PROGRESS_WIDTH, PROGRESS_HEIGHT)) {
+            int maximumProgress = menu.getMaximumMiningProgress();
+            int percent = maximumProgress == 0 ? 0 : menu.getMiningProgress() * 100 / maximumProgress;
+            graphics.renderTooltip(font, List.of(
+                    Component.translatable("gui.horizontalminer.tooltip.mining_progress").getVisualOrderText(),
+                    Component.translatable("gui.horizontalminer.tooltip.percent", percent).getVisualOrderText()
+            ), mouseX, mouseY);
+        } else if (isInside(mouseX, mouseY, 124, 53, 44, 9)) {
+            graphics.renderTooltip(font, Component.translatable("gui.horizontalminer.tooltip.depth"), mouseX, mouseY);
+        }
+    }
+
+    private boolean isInside(int mouseX, int mouseY, int x, int y, int width, int height) {
+        return mouseX >= leftPos + x && mouseX < leftPos + x + width
+                && mouseY >= topPos + y && mouseY < topPos + y + height;
     }
 }

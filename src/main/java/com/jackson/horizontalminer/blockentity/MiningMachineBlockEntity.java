@@ -36,6 +36,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     private final MiningMachineInventory inventory =
             new MiningMachineInventory(this::setChanged);
     private int remainingBurnTime;
+    private int maximumBurnTime;
     private int currentTunnelDepth;
     private int miningProgress;
     private List<BlockPos> currentSlice = List.of();
@@ -45,19 +46,32 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     private final ContainerData burnTimeData = new ContainerData() {
         @Override
         public int get(int index) {
-            return index == 0 ? remainingBurnTime : 0;
+            return switch (index) {
+                case 0 -> remainingBurnTime;
+                case 1 -> maximumBurnTime;
+                case 2 -> miningProgress;
+                case 3 -> TICKS_PER_MINING_CYCLE;
+                case 4 -> currentTunnelDepth;
+                case 5 -> getMachineStatus().ordinal();
+                default -> 0;
+            };
         }
 
         @Override
         public void set(int index, int value) {
-            if (index == 0) {
-                remainingBurnTime = value;
+            switch (index) {
+                case 0 -> remainingBurnTime = value;
+                case 1 -> maximumBurnTime = value;
+                case 2 -> miningProgress = value;
+                case 4 -> currentTunnelDepth = value;
+                default -> {
+                }
             }
         }
 
         @Override
         public int getCount() {
-            return 1;
+            return 6;
         }
     };
 
@@ -77,6 +91,10 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         return remainingBurnTime;
     }
 
+    public int getMaximumBurnTime() {
+        return maximumBurnTime;
+    }
+
     public int getCurrentTunnelDepth() {
         return currentTunnelDepth;
     }
@@ -87,6 +105,19 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
 
     public boolean isOutputBlocked() {
         return outputBlocked;
+    }
+
+    public MachineStatus getMachineStatus() {
+        if (outputBlocked) {
+            return MachineStatus.OUTPUT_FULL;
+        }
+        if (remainingBurnTime > 0 || isValidFuel(inventory.getStackInSlot(MiningMachineInventory.FUEL_SLOT))) {
+            return MachineStatus.MINING;
+        }
+        if (currentTunnelDepth > 0 || miningProgress > 0) {
+            return MachineStatus.OUT_OF_FUEL;
+        }
+        return MachineStatus.IDLE;
     }
 
     /**
@@ -357,6 +388,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         }
 
         remainingBurnTime = burnDuration;
+        maximumBurnTime = burnDuration;
         setChanged();
         return true;
     }
@@ -379,6 +411,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         super.saveAdditional(tag);
         tag.put("Inventory", inventory.serializeNBT());
         tag.putInt("RemainingBurnTime", remainingBurnTime);
+        tag.putInt("MaximumBurnTime", maximumBurnTime);
         tag.putInt("CurrentTunnelDepth", currentTunnelDepth);
         tag.putInt("MiningProgress", miningProgress);
         tag.putBoolean("OutputBlocked", outputBlocked);
@@ -416,6 +449,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         super.load(tag);
         inventory.deserializeNBT(tag.getCompound("Inventory"));
         remainingBurnTime = tag.getInt("RemainingBurnTime");
+        maximumBurnTime = Math.max(tag.getInt("MaximumBurnTime"), remainingBurnTime);
         currentTunnelDepth = tag.getInt("CurrentTunnelDepth");
         miningProgress = tag.getInt("MiningProgress");
         outputBlocked = tag.getBoolean("OutputBlocked");
@@ -447,5 +481,17 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
             }
         }
         pendingDrops = List.copyOf(loadedDrops);
+    }
+
+    public enum MachineStatus {
+        MINING,
+        OUT_OF_FUEL,
+        OUTPUT_FULL,
+        IDLE;
+
+        public static MachineStatus byId(int id) {
+            MachineStatus[] values = values();
+            return id >= 0 && id < values.length ? values[id] : IDLE;
+        }
     }
 }

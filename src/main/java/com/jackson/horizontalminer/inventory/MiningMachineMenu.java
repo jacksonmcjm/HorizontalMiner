@@ -21,6 +21,7 @@ public class MiningMachineMenu extends AbstractContainerMenu {
     private static final int PLAYER_INVENTORY_END = PLAYER_INVENTORY_START + 27;
     private static final int HOTBAR_START = PLAYER_INVENTORY_END;
     private static final int HOTBAR_END = HOTBAR_START + 9;
+    private static final int DATA_COUNT = 6;
 
     private final ContainerLevelAccess access;
     private final ContainerData burnTimeData;
@@ -32,7 +33,7 @@ public class MiningMachineMenu extends AbstractContainerMenu {
     }
 
     private MiningMachineMenu(int containerId, Inventory playerInventory, MenuData menuData) {
-        this(containerId, playerInventory, menuData.inventory(), menuData.blockPos(), new SimpleContainerData(1));
+        this(containerId, playerInventory, menuData.inventory(), menuData.blockPos(), new SimpleContainerData(DATA_COUNT));
     }
 
     public MiningMachineMenu(int containerId,
@@ -75,6 +76,40 @@ public class MiningMachineMenu extends AbstractContainerMenu {
 
     public int getRemainingBurnTime() {
         return burnTimeData.get(0);
+    }
+
+    public int getMaximumBurnTime() {
+        return burnTimeData.get(1);
+    }
+
+    public int getMiningProgress() {
+        return burnTimeData.get(2);
+    }
+
+    public int getMaximumMiningProgress() {
+        return burnTimeData.get(3);
+    }
+
+    public int getTunnelDepth() {
+        return burnTimeData.get(4);
+    }
+
+    public MiningMachineBlockEntity.MachineStatus getMachineStatus() {
+        return MiningMachineBlockEntity.MachineStatus.byId(burnTimeData.get(5));
+    }
+
+    public int getScaledBurnProgress(int pixels) {
+        if (getRemainingBurnTime() <= 0 || getMaximumBurnTime() <= 0) {
+            return 0;
+        }
+        return Math.min(pixels, getRemainingBurnTime() * pixels / getMaximumBurnTime());
+    }
+
+    public int getScaledMiningProgress(int pixels) {
+        if (getMaximumMiningProgress() <= 0) {
+            return 0;
+        }
+        return Math.min(pixels, getMiningProgress() * pixels / getMaximumMiningProgress());
     }
 
     @Override
