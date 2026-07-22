@@ -16,6 +16,8 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerData;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -37,6 +39,9 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
     private int currentTunnelDepth;
     private int miningProgress;
     private List<BlockPos> currentSlice = List.of();
+    private List<PendingTarget> pendingTargets = List.of();
+    private List<ItemStack> pendingDrops = List.of();
+    private boolean outputBlocked;
     private final ContainerData burnTimeData = new ContainerData() {
         @Override
         public int get(int index) {
@@ -80,9 +85,13 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         return miningProgress;
     }
 
+    public boolean isOutputBlocked() {
+        return outputBlocked;
+    }
+
     /**
      * Builds the next 5-wide, 3-high vertical tunnel slice directly ahead of the machine.
-     * The floor (Y + 0) is omitted; the outer columns omit Y + 1.
+     * The floor is at Y - 1; the full-width bottom row is at the machine's Y level.
      */
     public List<BlockPos> calculateCurrentSlice() {
         Direction facing = getBlockState().getValue(MiningMachineBlock.FACING);
@@ -91,8 +100,8 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         List<BlockPos> slice = new ArrayList<>(13);
 
         for (int sideways = -2; sideways <= 2; sideways++) {
-            int lowestY = Math.abs(sideways) <= 1 ? 1 : 2;
-            for (int yOffset = lowestY; yOffset <= 3; yOffset++) {
+            int highestY = Math.abs(sideways) <= 1 ? 2 : 1;
+            for (int yOffset = 0; yOffset <= highestY; yOffset++) {
                 slice.add(sliceOrigin.relative(acrossTunnel, sideways).above(yOffset));
             }
         }
@@ -108,15 +117,20 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         return !stack.isEmpty() && ForgeHooks.getBurnTime(stack, RecipeType.SMELTING) > 0;
     }
 
-    /**
-     * This debug-stage engine can always evaluate and advance a slice, even when that
-     * slice contains no mineable blocks. Real mining work checks will replace this gate.
-     */
+    /** Returns whether the machine has fuel available after output capacity is satisfied. */
     public boolean canOperate() {
         return remainingBurnTime > 0 || isValidFuel(inventory.getStackInSlot(MiningMachineInventory.FUEL_SLOT));
     }
 
     public static void serverTick(Level level, BlockPos pos, BlockState state, MiningMachineBlockEntity machine) {
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+
+        if (!machine.ensurePendingSlice(serverLevel)) {
+            return;
+        }
+
         if (!machine.canOperate()) {
             return;
         }
@@ -127,12 +141,12 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
 
         if (machine.remainingBurnTime > 0) {
             machine.remainingBurnTime--;
-            machine.tickMiningEngine(level);
+            machine.tickMiningEngine(serverLevel);
             machine.setChanged();
         }
     }
 
-    private void tickMiningEngine(Level level) {
+    private void tickMiningEngine(ServerLevel level) {
         if (currentSlice.isEmpty()) {
             currentSlice = calculateCurrentSlice();
         }
@@ -142,20 +156,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
             return;
         }
 
-        List<BlockPos> completedSlice = currentSlice;
-        List<BlockPos> mineableBlocks = completedSlice.stream()
-                .filter(target -> isMineable(level, target))
-                .toList();
-
-        LOGGER.info("Mining Machine at {} completed slice depth {} facing {}: planned targets {}; "
-                        + "{} mineable targets {}",
-                worldPosition, currentTunnelDepth,
-                getBlockState().getValue(MiningMachineBlock.FACING), completedSlice,
-                mineableBlocks.size(), mineableBlocks);
-
-        currentTunnelDepth++;
-        miningProgress = 0;
-        currentSlice = calculateCurrentSlice();
+        completePendingSlice(level);
     }
 
     private static boolean isMineable(Level level, BlockPos target) {
@@ -164,6 +165,182 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
                 && targetState.getFluidState().isEmpty()
                 && !targetState.is(Blocks.BEDROCK)
                 && targetState.getDestroySpeed(level, target) >= 0.0F;
+    }
+
+    /**
+     * Rolls loot once for the current slice and retains those exact stacks until the
+     * cycle completes. An output-capacity failure pauses before any further fuel burns.
+     */
+    private boolean ensurePendingSlice(ServerLevel level) {
+        if (!pendingTargets.isEmpty() || !pendingDrops.isEmpty()) {
+            if (canInsertAll(pendingDrops)) {
+                outputBlocked = false;
+                return true;
+            }
+
+            outputBlocked = true;
+            return false;
+        }
+
+        if (currentSlice.isEmpty()) {
+            currentSlice = calculateCurrentSlice();
+        }
+
+        List<PendingTarget> targets = new ArrayList<>();
+        List<ItemStack> drops = new ArrayList<>();
+        for (BlockPos target : currentSlice) {
+            if (!isMineable(level, target)) {
+                continue;
+            }
+
+            BlockState targetState = level.getBlockState(target);
+            targets.add(new PendingTarget(target.immutable(), Block.getId(targetState)));
+            drops.addAll(Block.getDrops(targetState, level, target, level.getBlockEntity(target), null,
+                    ItemStack.EMPTY));
+        }
+
+        pendingTargets = List.copyOf(targets);
+        pendingDrops = copyStacks(drops);
+        outputBlocked = !canInsertAll(pendingDrops);
+        return !outputBlocked;
+    }
+
+    private void completePendingSlice(ServerLevel level) {
+        if (!pendingTargetsAreUnchanged(level)) {
+            clearPendingSlice();
+            miningProgress = 0;
+            return;
+        }
+
+        if (!canInsertAll(pendingDrops)) {
+            outputBlocked = true;
+            return;
+        }
+
+        if (!insertAllDrops(pendingDrops)) {
+            outputBlocked = true;
+            return;
+        }
+
+        for (PendingTarget target : pendingTargets) {
+            level.setBlock(target.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+        }
+
+        LOGGER.info("Mining Machine at {} mined slice depth {}: removed {} blocks and inserted {} drop stacks",
+                worldPosition, currentTunnelDepth, pendingTargets.size(), pendingDrops.size());
+        currentTunnelDepth++;
+        miningProgress = 0;
+        currentSlice = calculateCurrentSlice();
+        clearPendingSlice();
+    }
+
+    private boolean pendingTargetsAreUnchanged(ServerLevel level) {
+        return pendingTargets.stream().allMatch(target -> {
+            BlockState state = level.getBlockState(target.pos());
+            return isMineable(level, target.pos()) && Block.getId(state) == target.stateId();
+        });
+    }
+
+    private boolean canInsertAll(List<ItemStack> drops) {
+        List<ItemStack> simulatedOutputs = new ArrayList<>();
+        for (int slot = MiningMachineInventory.OUTPUT_START; slot <= MiningMachineInventory.OUTPUT_END; slot++) {
+            simulatedOutputs.add(inventory.getStackInSlot(slot).copy());
+        }
+
+        for (ItemStack drop : drops) {
+            if (!simulateInsert(simulatedOutputs, drop.copy()).isEmpty()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static ItemStack simulateInsert(List<ItemStack> outputs, ItemStack stack) {
+        for (ItemStack existing : outputs) {
+            if (ItemStack.isSameItemSameTags(existing, stack)) {
+                int moved = Math.min(stack.getCount(), existing.getMaxStackSize() - existing.getCount());
+                if (moved > 0) {
+                    existing.grow(moved);
+                    stack.shrink(moved);
+                }
+            }
+        }
+
+        for (int index = 0; index < outputs.size() && !stack.isEmpty(); index++) {
+            if (outputs.get(index).isEmpty()) {
+                int moved = Math.min(stack.getCount(), stack.getMaxStackSize());
+                ItemStack inserted = stack.copy();
+                inserted.setCount(moved);
+                outputs.set(index, inserted);
+                stack.shrink(moved);
+            }
+        }
+
+        return stack;
+    }
+
+    private boolean insertAllDrops(List<ItemStack> drops) {
+        List<ItemStack> originalOutputs = new ArrayList<>();
+        for (int slot = MiningMachineInventory.OUTPUT_START; slot <= MiningMachineInventory.OUTPUT_END; slot++) {
+            originalOutputs.add(inventory.getStackInSlot(slot).copy());
+        }
+
+        for (ItemStack drop : drops) {
+            if (!insertOutput(drop.copy()).isEmpty()) {
+                restoreOutputSlots(originalOutputs);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private ItemStack insertOutput(ItemStack stack) {
+        for (int slot = MiningMachineInventory.OUTPUT_START;
+             slot <= MiningMachineInventory.OUTPUT_END && !stack.isEmpty(); slot++) {
+            ItemStack existing = inventory.getStackInSlot(slot);
+            if (ItemStack.isSameItemSameTags(existing, stack)) {
+                int moved = Math.min(stack.getCount(), existing.getMaxStackSize() - existing.getCount());
+                if (moved > 0) {
+                    existing.grow(moved);
+                    stack.shrink(moved);
+                    inventory.setStackInSlot(slot, existing);
+                }
+            }
+        }
+
+        for (int slot = MiningMachineInventory.OUTPUT_START;
+             slot <= MiningMachineInventory.OUTPUT_END && !stack.isEmpty(); slot++) {
+            if (inventory.getStackInSlot(slot).isEmpty()) {
+                int moved = Math.min(stack.getCount(), stack.getMaxStackSize());
+                ItemStack inserted = stack.copy();
+                inserted.setCount(moved);
+                inventory.setStackInSlot(slot, inserted);
+                stack.shrink(moved);
+            }
+        }
+
+        return stack;
+    }
+
+    private void restoreOutputSlots(List<ItemStack> originalOutputs) {
+        for (int index = 0; index < originalOutputs.size(); index++) {
+            inventory.setStackInSlot(MiningMachineInventory.OUTPUT_START + index, originalOutputs.get(index));
+        }
+    }
+
+    private void clearPendingSlice() {
+        pendingTargets = List.of();
+        pendingDrops = List.of();
+        outputBlocked = false;
+    }
+
+    private static List<ItemStack> copyStacks(List<ItemStack> stacks) {
+        return stacks.stream().filter(stack -> !stack.isEmpty()).map(ItemStack::copy).toList();
+    }
+
+    private record PendingTarget(BlockPos pos, int stateId) {
     }
 
     private boolean consumeFuel() {
@@ -204,6 +381,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         tag.putInt("RemainingBurnTime", remainingBurnTime);
         tag.putInt("CurrentTunnelDepth", currentTunnelDepth);
         tag.putInt("MiningProgress", miningProgress);
+        tag.putBoolean("OutputBlocked", outputBlocked);
 
         ListTag sliceTag = new ListTag();
         for (BlockPos slicePos : currentSlice) {
@@ -214,6 +392,23 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
             sliceTag.add(positionTag);
         }
         tag.put("CurrentSlice", sliceTag);
+
+        ListTag pendingTargetTag = new ListTag();
+        for (PendingTarget target : pendingTargets) {
+            CompoundTag targetTag = new CompoundTag();
+            targetTag.putInt("X", target.pos().getX());
+            targetTag.putInt("Y", target.pos().getY());
+            targetTag.putInt("Z", target.pos().getZ());
+            targetTag.putInt("StateId", target.stateId());
+            pendingTargetTag.add(targetTag);
+        }
+        tag.put("PendingTargets", pendingTargetTag);
+
+        ListTag pendingDropTag = new ListTag();
+        for (ItemStack drop : pendingDrops) {
+            pendingDropTag.add(drop.save(new CompoundTag()));
+        }
+        tag.put("PendingDrops", pendingDropTag);
     }
 
     @Override
@@ -223,6 +418,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         remainingBurnTime = tag.getInt("RemainingBurnTime");
         currentTunnelDepth = tag.getInt("CurrentTunnelDepth");
         miningProgress = tag.getInt("MiningProgress");
+        outputBlocked = tag.getBoolean("OutputBlocked");
 
         List<BlockPos> loadedSlice = new ArrayList<>();
         ListTag sliceTag = tag.getList("CurrentSlice", Tag.TAG_COMPOUND);
@@ -232,5 +428,24 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
                     positionTag.getInt("Z")));
         }
         currentSlice = List.copyOf(loadedSlice);
+
+        List<PendingTarget> loadedTargets = new ArrayList<>();
+        ListTag pendingTargetTag = tag.getList("PendingTargets", Tag.TAG_COMPOUND);
+        for (int index = 0; index < pendingTargetTag.size(); index++) {
+            CompoundTag targetTag = pendingTargetTag.getCompound(index);
+            loadedTargets.add(new PendingTarget(new BlockPos(targetTag.getInt("X"), targetTag.getInt("Y"),
+                    targetTag.getInt("Z")), targetTag.getInt("StateId")));
+        }
+        pendingTargets = List.copyOf(loadedTargets);
+
+        List<ItemStack> loadedDrops = new ArrayList<>();
+        ListTag pendingDropTag = tag.getList("PendingDrops", Tag.TAG_COMPOUND);
+        for (int index = 0; index < pendingDropTag.size(); index++) {
+            ItemStack drop = ItemStack.of(pendingDropTag.getCompound(index));
+            if (!drop.isEmpty()) {
+                loadedDrops.add(drop);
+            }
+        }
+        pendingDrops = List.copyOf(loadedDrops);
     }
 }
