@@ -29,6 +29,7 @@ import java.util.List;
 public class MiningMachineBlockEntity extends BlockEntity implements MenuProvider {
 
     private static final int TICKS_PER_MINING_CYCLE = 100;
+    private static final String NBT_TUNNEL_DEPTH = "CurrentTunnelDepth";
     public static final int MACHINE_DATA_COUNT = 6;
     public static final int DATA_REMAINING_BURN_TIME = 0;
     public static final int DATA_MAXIMUM_BURN_TIME = 1;
@@ -277,9 +278,8 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         }
 
         removePendingTargets(level);
-        currentTunnelDepth++;
+        advanceTunnelDepth();
         miningProgress = 0;
-        currentSlice = calculateCurrentSlice();
         clearPendingSlice();
     }
 
@@ -294,6 +294,12 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         for (PendingTarget target : pendingTargets) {
             level.setBlock(target.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
         }
+    }
+
+    private void advanceTunnelDepth() {
+        currentTunnelDepth++;
+        currentSlice = calculateCurrentSlice();
+        setChanged();
     }
 
     private boolean canInsertAll(List<ItemStack> drops) {
@@ -441,7 +447,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         tag.put("Inventory", inventory.serializeNBT());
         tag.putInt("RemainingBurnTime", remainingBurnTime);
         tag.putInt("MaximumBurnTime", maximumBurnTime);
-        tag.putInt("CurrentTunnelDepth", currentTunnelDepth);
+        tag.putInt(NBT_TUNNEL_DEPTH, currentTunnelDepth);
         tag.putInt("MiningProgress", miningProgress);
         tag.putBoolean("OutputBlocked", outputBlocked);
 
@@ -479,7 +485,7 @@ public class MiningMachineBlockEntity extends BlockEntity implements MenuProvide
         inventory.deserializeNBT(tag.getCompound("Inventory"));
         remainingBurnTime = tag.getInt("RemainingBurnTime");
         maximumBurnTime = Math.max(tag.getInt("MaximumBurnTime"), remainingBurnTime);
-        currentTunnelDepth = tag.getInt("CurrentTunnelDepth");
+        currentTunnelDepth = tag.getInt(NBT_TUNNEL_DEPTH);
         miningProgress = tag.getInt("MiningProgress");
         outputBlocked = tag.getBoolean("OutputBlocked");
 
